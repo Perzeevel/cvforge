@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@media print {
+  body {
+    background: white !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #cv-preview,
+  #cv-preview * {
+    visibility: visible;
+  }
+
+  #cv-preview {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+    overflow: visible !important;
+  }
+
+  #cv-preview > div {
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 0;
+  }
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  body {
+    margin: 0;
+    background: white !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .cv-print-area,
+  .cv-print-area * {
+    visibility: visible;
+  }
+
+  .cv-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 210mm;
+    min-height: 297mm;
+    background: white !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* =========================
+   CVFORGE PRINT / PDF
+========================= */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  /* Hide the normal builder UI */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Show only the CV */
+  .cv-print-area,
+  .cv-print-area * {
+    visibility: visible;
+  }
+
+  .cv-print-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+
+    width: 210mm !important;
+    max-width: 210mm !important;
+    min-width: 0 !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    background: white !important;
+    box-shadow: none !important;
+  }
+
+  #cv-preview {
+    overflow: visible !important;
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .cv-preview-wrapper {
+    overflow: visible !important;
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}
