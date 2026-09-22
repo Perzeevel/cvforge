@@ -1,5 +1,18 @@
 "use client";
 
+import AuthGuard from "../components/AuthGuard";
+import { auth } from "../lib/firebase";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+} from "firebase/firestore";
+import { db } from "../lib/firebase";
+
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 type Template = "modern" | "executive" | "minimal";
@@ -1058,6 +1071,20 @@ function MinimalTemplate({
   );
 }
 
+const saveCVToFirestore = async (cv: SavedCV) => {
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("You must be signed in to save your CV.");
+  }
+
+  await setDoc(
+    doc(db, "users", user.uid, "cvs", cv.id),
+    cv
+  );
+};
+
+
 
 
 /* =========================
@@ -1066,6 +1093,8 @@ function MinimalTemplate({
 
 function BuilderPageContent() {
   const searchParams = useSearchParams();
+
+  
 
   const [form, setForm] = useState<FormData>(emptyForm);
   const [template, setTemplate] = useState<Template>("modern");
@@ -1081,94 +1110,184 @@ const [currentCVId, setCurrentCVId] = useState<string>("default");
 const [cvName, setCvName] = useState("My CV");
 
   // LOAD SAVED CVS
-useEffect(() => {
-  try {
-    const savedCVsData = localStorage.getItem(
-      "cvforge-cvs"
-    );
-
-    if (savedCVsData) {
-      const parsedCVs: SavedCV[] =
-        JSON.parse(savedCVsData);
-
-      if (Array.isArray(parsedCVs) && parsedCVs.length > 0) {
-        setSavedCVs(parsedCVs);
-
-        const activeCV = parsedCVs[0];
-
-        setCurrentCVId(activeCV.id);
-        setCvName(activeCV.name);
-        setForm(activeCV.form);
-        setTemplate(activeCV.template);
-        setAccentColor(activeCV.accentColor);
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+  
+    const loadCVs = () => {
+      unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (!user) {
+          setIsLoaded(true);
+          setSaveStatus("Not signed in");
+          return;
+        }
+  
+        try {
+          const cvsRef = collection(
+            db,
+            "users",
+            user.uid,
+            "cvs"
+          );
+  
+          const snapshot = await getDocs(cvsRef);
+  
+          if (!snapshot.empty) {
+            const cloudCVs = snapshot.docs.map(
+              (doc) => doc.data() as SavedCV
+            );
+  
+            cloudCVs.sort(
+              (a, b) => b.updatedAt - a.updatedAt
+            );
+  
+            setSavedCVs(cloudCVs);
+  
+            const activeCV = cloudCVs[0];
+  
+            setCurrentCVId(activeCV.id);
+            setCvName(activeCV.name);
+            setForm(activeCV.form);
+            setTemplate(activeCV.template);
+            setAccentColor(activeCV.accentColor);
+  
+            console.log("CVs loaded from Firestore.");
+          } else {
+            // No cloud CVs yet.
+            // Check localStorage and migrate existing CVs.
+            const savedCVsData =
+              localStorage.getItem("cvforge-cvs");
+  
+            if (savedCVsData) {
+              const parsedCVs: SavedCV[] =
+                JSON.parse(savedCVsData);
+  
+              if (
+                Array.isArray(parsedCVs) &&
+                parsedCVs.length > 0
+              ) {
+                setSavedCVs(parsedCVs);
+  
+                const activeCV = parsedCVs[0];
+  
+                setCurrentCVId(activeCV.id);
+                setCvName(activeCV.name);
+                setForm(activeCV.form);
+                setTemplate(activeCV.template);
+                setAccentColor(activeCV.accentColor);
+  
+                // Migrate existing CVs to Firestore.
+                await Promise.all(
+                  parsedCVs.map((cv) =>
+                    setDoc(
+                      doc(
+                        db,
+                        "users",
+                        user.uid,
+                        "cvs",
+                        cv.id
+                      ),
+                      cv
+                    )
+                  )
+                );
+  
+                console.log(
+                  "Existing CVs migrated to Firestore."
+                );
+              }
+            } else {
+              // No cloud CVs and no local CVs.
+              const oldForm =
+                localStorage.getItem("cvforge-form");
+  
+              const oldAccent =
+                localStorage.getItem(
+                  "cvforge-accent-color"
+                );
+  
+              let loadedForm = emptyForm;
+  
+              if (oldForm) {
+                const parsedForm =
+                  JSON.parse(oldForm);
+  
+                loadedForm = {
+                  ...emptyForm,
+                  ...parsedForm,
+                  experience:
+                    Array.isArray(
+                      parsedForm.experience
+                    ) &&
+                    parsedForm.experience.length > 0
+                      ? parsedForm.experience
+                      : emptyForm.experience,
+                  education:
+                    Array.isArray(
+                      parsedForm.education
+                    ) &&
+                    parsedForm.education.length > 0
+                      ? parsedForm.education
+                      : emptyForm.education,
+                };
+              }
+  
+              const migratedCV: SavedCV = {
+                id: "cv-" + Date.now(),
+                name:
+                  loadedForm.name.trim() ||
+                  "My CV",
+                form: loadedForm,
+                template: "modern",
+                accentColor:
+                  oldAccent === "blue" ||
+                  oldAccent === "purple" ||
+                  oldAccent === "green" ||
+                  oldAccent === "red" ||
+                  oldAccent === "orange" ||
+                  oldAccent === "black"
+                    ? oldAccent
+                    : "blue",
+                updatedAt: Date.now(),
+              };
+  
+              setSavedCVs([migratedCV]);
+              setCurrentCVId(migratedCV.id);
+              setCvName(migratedCV.name);
+              setForm(migratedCV.form);
+              setTemplate(migratedCV.template);
+              setAccentColor(
+                migratedCV.accentColor
+              );
+  
+              await saveCVToFirestore(
+                migratedCV
+              );
+  
+              console.log(
+                "New CV created in Firestore."
+              );
+            }
+          }
+        } catch (error) {
+          console.error(
+            "Could not load CVs from Firestore:",
+            error
+          );
+        } finally {
+          setIsLoaded(true);
+          setSaveStatus("Saved");
+        }
+      });
+    };
+  
+    loadCVs();
+  
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
       }
-    } else {
-      // Migrate the old single CV
-      const oldForm =
-        localStorage.getItem("cvforge-form");
-
-      const oldAccent =
-        localStorage.getItem(
-          "cvforge-accent-color"
-        );
-
-      let loadedForm = emptyForm;
-
-      if (oldForm) {
-        const parsedForm = JSON.parse(oldForm);
-
-        loadedForm = {
-          ...emptyForm,
-          ...parsedForm,
-          experience:
-            Array.isArray(parsedForm.experience) &&
-            parsedForm.experience.length > 0
-              ? parsedForm.experience
-              : emptyForm.experience,
-          education:
-            Array.isArray(parsedForm.education) &&
-            parsedForm.education.length > 0
-              ? parsedForm.education
-              : emptyForm.education,
-        };
-      }
-
-      const migratedCV: SavedCV = {
-        id: "cv-" + Date.now(),
-        name:
-          loadedForm.name.trim() ||
-          "My CV",
-        form: loadedForm,
-        template: "modern",
-        accentColor:
-          oldAccent === "blue" ||
-          oldAccent === "purple" ||
-          oldAccent === "green" ||
-          oldAccent === "red" ||
-          oldAccent === "orange" ||
-          oldAccent === "black"
-            ? oldAccent
-            : "blue",
-        updatedAt: Date.now(),
-      };
-
-      setSavedCVs([migratedCV]);
-      setCurrentCVId(migratedCV.id);
-      setCvName(migratedCV.name);
-      setForm(migratedCV.form);
-      setTemplate(migratedCV.template);
-      setAccentColor(migratedCV.accentColor);
-    }
-  } catch (error) {
-    console.error(
-      "Could not load saved CVs:",
-      error
-    );
-  } finally {
-    setIsLoaded(true);
-    setSaveStatus("Saved");
-  }
-}, []);
+    };
+  }, []);
 
   // AUTO-SAVE CV
   
@@ -1217,66 +1336,79 @@ useEffect(() => {
 
 
   // AUTO-SAVE CURRENT CV
-useEffect(() => {
-  if (!isLoaded) return;
-
-  try {
-    setSaveStatus("Saving...");
-
-    const updatedCV: SavedCV = {
-      id: currentCVId,
-      name:
-        cvName.trim() ||
-        form.name.trim() ||
-        "My CV",
-      form,
-      template,
-      accentColor,
-      updatedAt: Date.now(),
+  useEffect(() => {
+    if (!isLoaded) return;
+  
+    let cancelled = false;
+  
+    const saveCV = async () => {
+      const user = auth.currentUser;
+  
+      if (!user) {
+        setSaveStatus("Not signed in");
+        return;
+      }
+  
+      try {
+        setSaveStatus("Saving...");
+  
+        const updatedCV: SavedCV = {
+          id: currentCVId,
+          name:
+            cvName.trim() ||
+            form.name.trim() ||
+            "My CV",
+          form,
+          template,
+          accentColor,
+          updatedAt: Date.now(),
+        };
+  
+        await saveCVToFirestore(updatedCV);
+  
+        if (cancelled) return;
+  
+        setSavedCVs((previous) => {
+          const exists = previous.some(
+            (cv) => cv.id === currentCVId
+          );
+  
+          return exists
+            ? previous.map((cv) =>
+                cv.id === currentCVId
+                  ? updatedCV
+                  : cv
+              )
+            : [...previous, updatedCV];
+        });
+  
+        setSaveStatus("Saved");
+      } catch (error) {
+        console.error(
+          "Could not save CV to Firestore:",
+          error
+        );
+  
+        if (!cancelled) {
+          setSaveStatus("Not saved");
+        }
+      }
     };
-
-    setSavedCVs((previous) => {
-      const exists = previous.some(
-        (cv) => cv.id === currentCVId
-      );
-
-      const updated = exists
-        ? previous.map((cv) =>
-            cv.id === currentCVId
-              ? updatedCV
-              : cv
-          )
-        : [...previous, updatedCV];
-
-      localStorage.setItem(
-        "cvforge-cvs",
-        JSON.stringify(updated)
-      );
-
-      return updated;
-    });
-
-    const timer = setTimeout(() => {
-      setSaveStatus("Saved");
-    }, 500);
-
-    return () => clearTimeout(timer);
-  } catch (error) {
-    console.error(
-      "Could not save CV:",
-      error
-    );
-
-    setSaveStatus("Not saved");
-  }
-}, [
-  form,
-  template,
-  accentColor,
-  cvName,
-  currentCVId,
-  isLoaded,
-]);
+  
+    const timer = setTimeout(saveCV, 500);
+  
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    form,
+    template,
+    accentColor,
+    cvName,
+    currentCVId,
+    isLoaded,
+  ]);
 
   /* =========================
      FORM FUNCTIONS
@@ -2005,6 +2137,20 @@ ${improvedSkills}
 >
 {isPro ? "⭐ Pro Preview" : "🔒 Free"}
 </button>
+{/* Sign Out */}  
+<button
+  type="button"
+  onClick={async () => {
+    await signOut(auth);
+  }}
+  className={`rounded-xl border px-4 py-2 text-sm font-bold ${
+    darkMode
+      ? "border-red-500/40 text-red-400 hover:bg-red-500/10"
+      : "border-red-300 text-red-600 hover:bg-red-50"
+  }`}
+>
+  Sign Out
+</button>
           </div>
         </div>
 
@@ -2079,153 +2225,227 @@ ${improvedSkills}
       </select>
 
       <button
-        type="button"
-        onClick={() => {
-          const name = window.prompt(
-            "Enter a name for your new CV:",
-            "New CV"
-          );
+  type="button"
+  onClick={async () => {
+    const name = window.prompt(
+      "Enter a name for your new CV:",
+      "New CV"
+    );
 
-          if (!name?.trim()) return;
+    if (!name?.trim()) return;
 
-          const newCV: SavedCV = {
-            id:
-              "cv-" +
-              Date.now(),
-            name: name.trim(),
-            form: {
-              ...emptyForm,
-              experience: [...emptyForm.experience],
-              education: [...emptyForm.education],
-            },
-            template: "modern",
-            accentColor: "blue",
-            updatedAt: Date.now(),
-          };
+    const user = auth.currentUser;
 
-          setSavedCVs((previous) => {
-            const updated = [
-              ...previous,
-              newCV,
-            ];
+    if (!user) {
+      window.alert(
+        "You must be signed in to create a new CV."
+      );
+      return;
+    }
 
-            localStorage.setItem(
-              "cvforge-cvs",
-              JSON.stringify(updated)
-            );
+    const newCV: SavedCV = {
+      id: "cv-" + Date.now(),
+      name: name.trim(),
+      form: {
+        ...emptyForm,
+        experience: [...emptyForm.experience],
+        education: [...emptyForm.education],
+      },
+      template: "modern",
+      accentColor: "blue",
+      updatedAt: Date.now(),
+    };
 
-            return updated;
-          });
+    try {
+      await saveCVToFirestore(newCV);
 
-          setCurrentCVId(newCV.id);
-          setCvName(newCV.name);
-          setForm({
-            ...emptyForm,
-            experience: [...emptyForm.experience],
-            education: [...emptyForm.education],
-          });
-          setTemplate("modern");
-          setAccentColor("blue");
-          setAtsAnalysis(null);
-          setTailoredResult("");
-          setAiResult("");
-        }}
-        className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-500"
-      >
-        + New CV
-      </button>
+      setSavedCVs((previous) => [
+        ...previous,
+        newCV,
+      ]);
 
-      <button
-        type="button"
-        onClick={() => {
-          const newName = window.prompt(
-            "Rename this CV:",
-            cvName
-          );
-        
-          if (!newName?.trim()) return;
-        
-          const updatedName = newName.trim();
-        
-          setCvName(updatedName);
-        
-          setSavedCVs((previous) => {
-            const updated = previous.map((cv) =>
-              cv.id === currentCVId
-                ? {
-                    ...cv,
-                    name: updatedName,
-                    updatedAt: Date.now(),
-                  }
-                : cv
-            );
-        
-            localStorage.setItem(
-              "cvforge-cvs",
-              JSON.stringify(updated)
-            );
-        
-            return updated;
-          });
-        }}
-        className={`rounded-xl border px-4 py-2 text-sm font-bold ${
-          darkMode
-            ? "border-slate-700 text-white hover:bg-slate-800"
-            : "border-slate-200 text-slate-800 hover:bg-slate-50"
-        }`}
-      >
-        ✏️ Rename
-      </button>
+      setCurrentCVId(newCV.id);
+      setCvName(newCV.name);
+      setForm({
+        ...emptyForm,
+        experience: [...emptyForm.experience],
+        education: [...emptyForm.education],
+      });
+      setTemplate("modern");
+      setAccentColor("blue");
+      setAtsAnalysis(null);
+      setTailoredResult("");
+      setAiResult("");
+      setSaveStatus("Saved");
+
+      console.log(
+        "New CV created in Firestore."
+      );
+    } catch (error) {
+      console.error(
+        "Could not create new CV:",
+        error
+      );
+
+      window.alert(
+        "Could not create the new CV. Please try again."
+      );
+    }
+  }}
+  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-500"
+>
+  + New CV
+</button>
+
+<button
+  type="button"
+  onClick={async () => {
+    const newName = window.prompt(
+      "Rename this CV:",
+      cvName
+    );
+
+    if (!newName?.trim()) return;
+
+    const updatedName = newName.trim();
+    const user = auth.currentUser;
+
+    if (!user) {
+      window.alert(
+        "You must be signed in to rename a CV."
+      );
+      return;
+    }
+
+    try {
+      const existingCV = savedCVs.find(
+        (cv) => cv.id === currentCVId
+      );
+
+      if (!existingCV) {
+        window.alert(
+          "Could not find the selected CV."
+        );
+        return;
+      }
+
+      const updatedCV: SavedCV = {
+        ...existingCV,
+        name: updatedName,
+        updatedAt: Date.now(),
+      };
+
+      await saveCVToFirestore(updatedCV);
+
+      setCvName(updatedName);
+
+      setSavedCVs((previous) =>
+        previous.map((cv) =>
+          cv.id === currentCVId
+            ? updatedCV
+            : cv
+        )
+      );
+
+      setSaveStatus("Saved");
+
+      console.log(
+        "CV renamed in Firestore."
+      );
+    } catch (error) {
+      console.error(
+        "Could not rename CV:",
+        error
+      );
+
+      window.alert(
+        "Could not rename the CV. Please try again."
+      );
+    }
+  }}
+  className={`rounded-xl border px-4 py-2 text-sm font-bold ${
+    darkMode
+      ? "border-slate-700 text-white hover:bg-slate-800"
+      : "border-slate-200 text-slate-800 hover:bg-slate-50"
+  }`}
+>
+  ✏️ Rename
+</button>
 
       {savedCVs.length > 1 && (
         <button
-          type="button"
-          onClick={() => {
-            const confirmed =
-              window.confirm(
-                `Delete "${cvName}"?`
-              );
-
-            if (!confirmed) return;
-
-            const remaining =
-              savedCVs.filter(
-                (cv) =>
-                  cv.id !== currentCVId
-              );
-
-            const nextCV =
-              remaining[0];
-
-            setSavedCVs(remaining);
-            localStorage.setItem(
-              "cvforge-cvs",
-              JSON.stringify(
-                remaining
+        type="button"
+        onClick={async () => {
+          const confirmed = window.confirm(
+            `Delete "${cvName}"?`
+          );
+      
+          if (!confirmed) return;
+      
+          if (savedCVs.length <= 1) {
+            window.alert(
+              "You must keep at least one CV."
+            );
+            return;
+          }
+      
+          const user = auth.currentUser;
+      
+          if (!user) {
+            window.alert(
+              "You must be signed in to delete a CV."
+            );
+            return;
+          }
+      
+          try {
+            await deleteDoc(
+              doc(
+                db,
+                "users",
+                user.uid,
+                "cvs",
+                currentCVId
               )
             );
-
-            setCurrentCVId(
-              nextCV.id
+      
+            const remaining = savedCVs.filter(
+              (cv) => cv.id !== currentCVId
             );
-            setCvName(
-              nextCV.name
-            );
+      
+            const nextCV = remaining[0];
+      
+            setSavedCVs(remaining);
+      
+            setCurrentCVId(nextCV.id);
+            setCvName(nextCV.name);
             setForm(nextCV.form);
-            setTemplate(
-              nextCV.template
-            );
-            setAccentColor(
-              nextCV.accentColor
-            );
+            setTemplate(nextCV.template);
+            setAccentColor(nextCV.accentColor);
             setAtsAnalysis(null);
             setTailoredResult("");
             setAiResult("");
-          }}
-          className="rounded-xl border border-red-200 px-4 py-2 text-sm font-bold text-red-600 transition hover:bg-red-50"
-        >
-          🗑️ Delete
-        </button>
+      
+            setSaveStatus("Saved");
+      
+            console.log(
+              "CV deleted from Firestore."
+            );
+          } catch (error) {
+            console.error(
+              "Could not delete CV:",
+              error
+            );
+      
+            window.alert(
+              "Could not delete the CV. Please try again."
+            );
+          }
+        }}
+        className="rounded-xl border border-red-200 px-4 py-2 text-sm font-bold text-red-600 transition hover:bg-red-50"
+      >
+        🗑️ Delete
+      </button>
       )}
     </div>
   </div>
@@ -3745,9 +3965,11 @@ ${improvedSkills}
 
 export default function BuilderPage() {
   return (
-    <Suspense fallback={<div>Loading CV Builder...</div>}>
-      <BuilderPageContent />
-    </Suspense>
+    <AuthGuard>
+      <Suspense fallback={<div>Loading CV Builder...</div>}>
+        <BuilderPageContent />
+      </Suspense>
+    </AuthGuard>
   );
 }
 
