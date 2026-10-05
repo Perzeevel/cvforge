@@ -4,16 +4,24 @@ import AuthGuard from "../components/AuthGuard";
 import { auth } from "../lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 
+
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   deleteDoc,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 
-import { Suspense, useEffect, useState, type ReactNode } from "react";
+import {
+  Suspense,
+  useEffect,
+  useState,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useSearchParams } from "next/navigation";
 type Template = "modern" | "executive" | "minimal";
 
@@ -907,6 +915,8 @@ function MinimalTemplate({
       item.graduationYear
   );
 
+  
+
   return (
     <div className="min-h-[1123px] bg-white px-12 py-11 text-black">
 
@@ -1071,6 +1081,8 @@ function MinimalTemplate({
   );
 }
 
+
+
 const saveCVToFirestore = async (cv: SavedCV) => {
   const user = auth.currentUser;
 
@@ -1094,12 +1106,74 @@ const saveCVToFirestore = async (cv: SavedCV) => {
 function BuilderPageContent() {
   const searchParams = useSearchParams();
 
+
+useEffect(() => {
+  const updateCVScale = () => {
+    const container = cvPreviewRef.current;
+
+    if (!container) return;
+
+    const width = container.clientWidth;
+
+    if (width < 794) {
+      setCvScale(width / 794);
+    } else {
+      setCvScale(1);
+    }
+  };
+
+  updateCVScale();
+
+  const observer = new ResizeObserver(updateCVScale);
+
+  if (cvPreviewRef.current) {
+    observer.observe(cvPreviewRef.current);
+  }
+
+  window.addEventListener("resize", updateCVScale);
+
+  return () => {
+    observer.disconnect();
+    window.removeEventListener("resize", updateCVScale);
+  };
+}, []);
+
   
 
   const [form, setForm] = useState<FormData>(emptyForm);
   const [template, setTemplate] = useState<Template>("modern");
   const [accentColor, setAccentColor] =
   useState<AccentColor>("blue");
+  const cvPreviewRef = useRef<HTMLDivElement>(null);
+const [cvScale, setCvScale] = useState(1);
+
+useEffect(() => {
+  const updateCVScale = () => {
+    const container = cvPreviewRef.current;
+
+    if (!container) return;
+
+    const availableWidth = container.clientWidth;
+    const scale = Math.min(1, availableWidth / 794);
+
+    setCvScale(scale);
+  };
+
+  updateCVScale();
+
+  const resizeObserver = new ResizeObserver(updateCVScale);
+
+  if (cvPreviewRef.current) {
+    resizeObserver.observe(cvPreviewRef.current);
+  }
+
+  window.addEventListener("resize", updateCVScale);
+
+  return () => {
+    resizeObserver.disconnect();
+    window.removeEventListener("resize", updateCVScale);
+  };
+}, []);
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [saveStatus, setSaveStatus] =
@@ -1116,12 +1190,46 @@ const [cvName, setCvName] = useState("My CV");
     const loadCVs = () => {
       unsubscribe = onAuthStateChanged(auth, async (user) => {
         if (!user) {
+          setUserEmail("");
+          setUserPlan("free");
           setIsLoaded(true);
           setSaveStatus("Not signed in");
           return;
         }
-  
+        
+        setUserEmail(user.email || "");
+        
         try {
+          const userRef = doc(db, "users", user.uid);
+          const userSnapshot = await getDoc(userRef);
+        
+          if (userSnapshot.exists()) {
+            const userData = userSnapshot.data();
+        
+            setUserPlan(
+              userData.plan === "pro"
+                ? "pro"
+                : "free"
+            );
+
+            const usedAI = userData.aiUses ?? 0;
+
+setAiUsesRemaining(
+  userData.plan === "pro"
+    ? Infinity
+    : Math.max(0, 2 - usedAI)
+);
+          } else {
+            await setDoc(
+              userRef,
+              {
+                plan: "free",
+              },
+              { merge: true }
+            );
+        
+            setUserPlan("free");
+          }
           const cvsRef = collection(
             db,
             "users",
@@ -1290,6 +1398,30 @@ const [cvName, setCvName] = useState("My CV");
   }, []);
 
   // AUTO-SAVE CV
+
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        accountMenuRef.current &&
+        !accountMenuRef.current.contains(event.target as Node)
+      ) {
+        setAccountMenuOpen(false);
+      }
+    };
+  
+    document.addEventListener(
+      "mousedown",
+      handleClickOutside
+    );
+  
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handleClickOutside
+      );
+    };
+  }, []);
   
 
   
@@ -1298,7 +1430,23 @@ const [cvName, setCvName] = useState("My CV");
 
   const [darkMode, setDarkMode] = useState(false);
 
-  const [isPro, setIsPro] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+
+  const [proModalOpen, setProModalOpen] = useState(false);
+
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+
+  const saveVersionRef = useRef(0);
+
+  const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+
+  const [userPlan, setUserPlan] = useState<"free" | "pro">("free");
+
+  const isProUser = userPlan === "pro";
+
+  const [aiUsesRemaining, setAiUsesRemaining] = useState(2);
 
   const [aiResult, setAiResult] = useState("");
 
@@ -1796,12 +1944,23 @@ ${improvedSkills}
     setAtsAnalysis(null);
   
     try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+
+      const user = auth.currentUser;
+
+if (!user) {
+  setTailoredResult("Please sign in before using AI tailoring.");
+  return;
+}
+
+const idToken = await user.getIdToken();
+
+const response = await fetch("/api/generate", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${idToken}`,
+  },
+  body: JSON.stringify({
           name: form.name,
           jobTitle: form.jobTitle,
           summary: form.summary,
@@ -1821,6 +1980,17 @@ ${improvedSkills}
       }
   
       if (!response.ok) {
+
+        if (
+          response.status === 403 &&
+          String(data?.error || "").includes(
+            "You have used your 2 free AI tailoring uses"
+          )
+        ) {
+          setAiUsesRemaining(0);
+          setTailoredResult(String(data.error));
+          return;
+        }
         const errorMessage = String(data?.error || "").toLowerCase();
   
         if (
@@ -1852,6 +2022,12 @@ ${improvedSkills}
   
       if (data?.analysis) {
         setAtsAnalysis(data.analysis);
+      
+        if (!isProUser) {
+          setAiUsesRemaining((previous) =>
+            Math.max(0, previous - 1)
+          );
+        }
       }
       
       setTailoredResult(
@@ -1888,14 +2064,33 @@ ${improvedSkills}
       return;
     }
   
+    if (!isProUser && aiUsesRemaining <= 0) {
+      setTailoredResult(
+        "You have used your 2 free AI uses. Upgrade to Pro to continue."
+      );
+      return;
+    }
+  
+    const user = auth.currentUser;
+  
+    if (!user) {
+      setTailoredResult(
+        "Please sign in before using AI Experience Improvement."
+      );
+      return;
+    }
+  
     setTailoringExperienceIndex(index);
     setTailoredResult("");
   
     try {
+      const idToken = await user.getIdToken();
+  
       const response = await fetch("/tailor-experience", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           experience,
@@ -1911,6 +2106,14 @@ ${improvedSkills}
         data = await response.json();
       } catch {
         data = {};
+      }
+  
+      if (response.status === 403) {
+        setAiUsesRemaining(0);
+        throw new Error(
+          data?.error ||
+            "You have used your 2 free AI uses. Upgrade to Pro to continue."
+        );
       }
   
       if (!response.ok) {
@@ -1930,7 +2133,13 @@ ${improvedSkills}
         index,
         result: data.result,
       });
-      
+  
+      if (!isProUser) {
+        setAiUsesRemaining((previous) =>
+          Math.max(0, previous - 1)
+        );
+      }
+  
       setTailoredResult(
         `✨ AI improvement is ready for Experience ${index + 1}.`
       );
@@ -1966,14 +2175,34 @@ ${improvedSkills}
       return;
     }
   
+    // Free users cannot use AI after reaching the limit
+    if (!isProUser && aiUsesRemaining <= 0) {
+      setTailoredResult(
+        "You have used your 2 free AI uses. Upgrade to Pro to continue."
+      );
+      return;
+    }
+  
+    const user = auth.currentUser;
+  
+    if (!user) {
+      setTailoredResult(
+        "Please sign in before using AI Education Improvement."
+      );
+      return;
+    }
+  
     setTailoringEducationIndex(index);
     setTailoredResult("");
   
     try {
+      const idToken = await user.getIdToken();
+  
       const response = await fetch("/tailor-education", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           education,
@@ -1991,6 +2220,16 @@ ${improvedSkills}
         data = {};
       }
   
+      // Free AI limit reached on server
+      if (response.status === 403) {
+        setAiUsesRemaining(0);
+  
+        throw new Error(
+          data?.error ||
+            "You have used your 2 free AI uses. Upgrade to Pro to continue."
+        );
+      }
+  
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -2003,12 +2242,19 @@ ${improvedSkills}
           "AI returned an empty education improvement."
         );
       }
-      
+  
       setEducationAIResult({
         index,
         result: data.result,
       });
-      
+  
+      // Successful AI use consumes one Free AI use
+      if (!isProUser) {
+        setAiUsesRemaining((previous) =>
+          Math.max(0, previous - 1)
+        );
+      }
+  
       setTailoredResult(
         `✨ Education ${index + 1} improvement is ready.`
       );
@@ -2034,162 +2280,351 @@ ${improvedSkills}
     >
       <div className="mx-auto max-w-7xl">
 
+      {accountSettingsOpen && (
+  <div
+  className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+  onClick={() => setAccountSettingsOpen(false)}
+>
+    <div  onClick={(event) => event.stopPropagation()}
+      className={`w-full max-w-md rounded-3xl border p-6 shadow-2xl ${
+        darkMode
+          ? "border-slate-700 bg-slate-900 text-white"
+          : "border-slate-200 bg-white text-slate-900"
+      }`}
+    >
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-black">
+            Account Settings
+          </h2>
+
+          <p className="mt-1 text-sm opacity-60">
+            Manage your CVForge account.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setAccountSettingsOpen(false)}
+          className={`rounded-xl px-3 py-2 text-sm font-bold ${
+            darkMode
+              ? "hover:bg-slate-800"
+              : "hover:bg-slate-100"
+          }`}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        <div
+          className={`rounded-2xl border p-4 ${
+            darkMode
+              ? "border-slate-700 bg-slate-800"
+              : "border-slate-200 bg-slate-50"
+          }`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-60">
+            Email
+          </p>
+
+          <p className="mt-1 break-all text-sm font-bold">
+            {userEmail}
+          </p>
+        </div>
+
+        <div
+          className={`rounded-2xl border p-4 ${
+            darkMode
+              ? "border-slate-700 bg-slate-800"
+              : "border-slate-200 bg-slate-50"
+          }`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-60">
+            Current Plan
+          </p>
+
+          <p className="mt-1 text-sm font-bold">
+          {userPlan === "pro"
+  ? "⭐ Pro Plan"
+  : "Free Plan"}
+          </p>
+        </div>
+
+        <div
+          className={`rounded-2xl border p-4 ${
+            darkMode
+              ? "border-slate-700"
+              : "border-slate-200"
+          }`}
+        >
+          <h3 className="font-bold">
+            🔐 Password
+          </h3>
+
+          <p className="mt-1 text-sm opacity-60">
+            Password management will be available here.
+          </p>
+        </div>
+
+        <div
+          className={`rounded-2xl border p-4 ${
+            darkMode
+              ? "border-red-500/30"
+              : "border-red-200"
+          }`}
+        >
+          <h3 className="font-bold text-red-600">
+            Danger Zone
+          </h3>
+
+          <p className="mt-1 text-sm opacity-60">
+            Account deletion will be available here.
+          </p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setAccountSettingsOpen(false)}
+        className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-500"
+      >
+        Done
+      </button>
+    </div>
+  </div>
+)}
+
         {/* =========================
-            TOP BAR
-        ========================= */}
+    TOP BAR
+========================= */}
 
-        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1
-              className={`text-3xl font-black ${
-                darkMode
-                  ? "text-white"
-                  : "text-slate-900"
-              }`}
-            >
-              CVForge
-            </h1>
+<div className="mb-8">
+  {/* Brand + Status */}
+  <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="min-w-0">
+      <h1
+        className={`text-3xl font-black tracking-tight ${
+          darkMode ? "text-white" : "text-slate-900"
+        }`}
+      >
+        CVForge
+      </h1>
 
-            <p
-              className={`text-sm ${
-                darkMode
-                  ? "text-slate-400"
-                  : "text-slate-500"
-              }`}
-            >
-              AI-powered CV Builder
+      <p
+        className={`mt-1 text-sm ${
+          darkMode ? "text-slate-400" : "text-slate-500"
+        }`}
+      >
+        AI-powered CV Builder
+      </p>
+    </div>
+
+    <div className="flex items-center gap-3">
+      <span
+        className={`rounded-full px-3 py-1.5 text-xs font-bold ${
+          saveStatus === "Saved"
+            ? darkMode
+              ? "bg-emerald-500/10 text-emerald-400"
+              : "bg-emerald-50 text-emerald-700"
+            : darkMode
+              ? "bg-slate-800 text-slate-300"
+              : "bg-slate-100 text-slate-600"
+        }`}
+      >
+        💾 {saveStatus}
+      </span>
+
+      <button
+        type="button"
+        onClick={clearCV}
+        className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+          darkMode
+            ? "border-red-500/40 text-red-400 hover:bg-red-500/10"
+            : "border-red-200 text-red-600 hover:bg-red-50"
+        }`}
+      >
+        🗑️ Clear
+      </button>
+    </div>
+  </div>
+
+  {/* Action Bar */}
+  <div className="no-print flex flex-wrap gap-2">
+    {/* Theme */}
+    <button
+      type="button"
+      onClick={() => setDarkMode(!darkMode)}
+      className={`rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
+        darkMode
+          ? "border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+          : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+      }`}
+    >
+      {darkMode ? "☀️ Light" : "🌙 Dark"}
+    </button>
+
+    {/* Print */}
+    <button
+      type="button"
+      onClick={printCV}
+      className={`rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
+        darkMode
+          ? "border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+          : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+      }`}
+    >
+      🖨️ Print / PDF
+    </button>
+
+    {/* Generate */}
+    <button
+      type="button"
+      onClick={generateCV}
+      disabled={loading}
+      className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {loading ? "Generating..." : "Generate CV"}
+    </button>
+
+    {/* Plan */}
+    <button
+  type="button"
+  onClick={() => {
+    if (userPlan !== "pro") {
+      setProModalOpen(true);
+    }
+  }}
+      className={`rounded-xl border px-4 py-2.5 text-sm font-bold ${
+        userPlan === "pro"
+          ? "border-blue-500 bg-blue-600 text-white"
+          : darkMode
+            ? "border-slate-700 text-white hover:bg-slate-800"
+            : "border-slate-300 text-slate-700 hover:bg-slate-100"
+      }`}
+    >
+      {userPlan === "pro" ? "⭐ Pro Plan" : "Free Plan"}
+    </button>
+
+    {/* Account */}
+    <div ref={accountMenuRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setAccountMenuOpen((open) => !open)}
+        className={`rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
+          darkMode
+            ? "border-slate-700 text-slate-200 hover:bg-slate-800"
+            : "border-slate-200 text-slate-700 hover:bg-slate-50"
+        }`}
+      >
+        👤 Account
+      </button>
+
+      {accountMenuOpen && (
+        <div
+          className={`absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border p-4 shadow-xl ${
+            darkMode
+              ? "border-slate-700 bg-slate-900 text-white"
+              : "border-slate-200 bg-white text-slate-900"
+          }`}
+        >
+          <div className="mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wide opacity-60">
+              Signed in as
+            </p>
+
+            <p className="mt-1 break-all text-sm font-bold">
+              {userEmail}
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-  <span
-    className={`text-sm ${
-      darkMode
-        ? "text-slate-400"
-        : "text-slate-500"
-    }`}
-  >
-    💾 {saveStatus}
-  </span>
+          <div
+            className={`mb-3 rounded-xl px-3 py-2 text-sm font-bold ${
+              isProUser
+                ? "bg-yellow-50 text-yellow-700"
+                : darkMode
+                  ? "bg-slate-800 text-slate-300"
+                  : "bg-slate-50 text-slate-600"
+            }`}
+          >
+            {userPlan === "pro" ? "⭐ Pro Plan" : "Free Plan"}
+          </div>
 
-  <button
-    onClick={clearCV}
-    className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${
-      darkMode
-        ? "border-red-500/40 text-red-400 hover:bg-red-500/10"
-        : "border-red-200 text-red-600 hover:bg-red-50"
-    }`}
-  >
-    🗑️ Clear
-  </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAccountMenuOpen(false);
+              setAccountSettingsOpen(true);
+            }}
+            className={`w-full rounded-xl px-3 py-2 text-left text-sm font-semibold ${
+              darkMode
+                ? "hover:bg-slate-800"
+                : "hover:bg-slate-50"
+            }`}
+          >
+            ⚙️ Account Settings
+          </button>
+        </div>
+      )}
+    </div>
+
+    {/* Sign Out */}
+    <button
+      type="button"
+      onClick={async () => {
+        await signOut(auth);
+      }}
+      className={`rounded-xl border px-4 py-2.5 text-sm font-bold ${
+        darkMode
+          ? "border-red-500/40 text-red-400 hover:bg-red-500/10"
+          : "border-red-300 text-red-600 hover:bg-red-50"
+      }`}
+    >
+      Sign Out
+    </button>
+  </div>
 </div>
 
-        <div className="no-print flex flex-wrap gap-3">
-            <button
-              onClick={() =>
-                setDarkMode(!darkMode)
-              }
-              className={`rounded-xl border px-4 py-3 text-sm font-bold transition ${
-                darkMode
-                  ? "border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
-                  : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-              }`}
-            >
-              {darkMode
-                ? "☀️ Light"
-                : "🌙 Dark"}
-            </button>
-
-            <button
-              onClick={printCV}
-              className={`rounded-xl border px-5 py-3 text-sm font-bold transition ${
-                darkMode
-                  ? "border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
-                  : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-              }`}
-            >
-              🖨️ Print / PDF
-            </button>
-
-            <button
-              onClick={generateCV}
-              disabled={loading}
-              className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-bold text-white transition hover:bg-slate-700 disabled:opacity-50"
-            >
-
-            
-              {loading
-                ? "Generating..."
-                : "Generate CV"}
-            </button>
-
-            
-<button
-  type="button"
-  onClick={() => setIsPro((prev) => !prev)}
-  className={`rounded-xl border px-4 py-2 text-sm font-bold ${
-    isPro
-      ? "border-blue-500 bg-blue-600 text-white"
-      : darkMode
-      ? "border-slate-700 text-white hover:bg-slate-800"
-      : "border-slate-300 text-slate-700 hover:bg-slate-100"
-  }`}
->
-{isPro ? "⭐ Pro Preview" : "🔒 Free"}
-</button>
-{/* Sign Out */}  
-<button
-  type="button"
-  onClick={async () => {
-    await signOut(auth);
-  }}
-  className={`rounded-xl border px-4 py-2 text-sm font-bold ${
-    darkMode
-      ? "border-red-500/40 text-red-400 hover:bg-red-500/10"
-      : "border-red-300 text-red-600 hover:bg-red-50"
-  }`}
->
-  Sign Out
-</button>
-          </div>
-        </div>
-
-        {/* =========================
-    CV MANAGER
-========================= */}
-
+{/* CV MANAGER */}
 <div
-  className={`mb-6 rounded-2xl p-5 shadow-sm ${
+  className={`mb-6 rounded-2xl border p-4 shadow-sm transition sm:p-5 ${
     darkMode
-      ? "bg-slate-900"
-      : "bg-white"
+      ? "border-slate-800 bg-slate-900"
+      : "border-slate-200 bg-white"
   }`}
 >
-  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
-    <div>
+  <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+    {/* CV INFO */}
+    <div className="min-w-0">
       <p
-        className={`text-xs font-bold uppercase tracking-widest ${
-          darkMode
-            ? "text-slate-400"
-            : "text-slate-500"
+        className={`text-xs font-bold uppercase tracking-[0.18em] ${
+          darkMode ? "text-slate-400" : "text-slate-500"
         }`}
       >
         Your CVs
       </p>
 
       <h2
-        className={`mt-1 text-lg font-black ${
-          darkMode
-            ? "text-white"
-            : "text-slate-900"
+        className={`mt-1 truncate text-lg font-black ${
+          darkMode ? "text-white" : "text-slate-900"
         }`}
+        title={cvName}
       >
         {cvName}
       </h2>
+
+      <p
+        className={`mt-1 text-xs ${
+          darkMode ? "text-slate-500" : "text-slate-400"
+        }`}
+      >
+        Manage your saved CVs
+      </p>
     </div>
 
-    <div className="flex flex-wrap gap-2">
+    {/* ACTIONS */}
+    <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
+      {/* SELECT CV */}
       <select
         value={currentCVId}
         onChange={(e) => {
@@ -2207,251 +2642,251 @@ ${improvedSkills}
           setAtsAnalysis(null);
           setTailoredResult("");
           setAiResult("");
+          setSaveStatus("Saved");
         }}
-        className={`rounded-xl border px-3 py-2 text-sm font-medium outline-none ${
+        className={`min-w-0 flex-1 rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none transition focus:ring-2 focus:ring-blue-500/30 sm:flex-none ${
           darkMode
-            ? "border-slate-700 bg-slate-800 text-white"
-            : "border-slate-200 bg-white text-slate-800"
+            ? "border-slate-700 bg-slate-800 text-white hover:border-slate-600"
+            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300"
         }`}
       >
         {savedCVs.map((cv) => (
-          <option
-            key={cv.id}
-            value={cv.id}
-          >
+          <option key={cv.id} value={cv.id}>
             {cv.name}
           </option>
         ))}
       </select>
 
+      {/* NEW CV */}
       <button
-  type="button"
-  onClick={async () => {
-    const name = window.prompt(
-      "Enter a name for your new CV:",
-      "New CV"
-    );
-
-    if (!name?.trim()) return;
-
-    const user = auth.currentUser;
-
-    if (!user) {
-      window.alert(
-        "You must be signed in to create a new CV."
-      );
-      return;
-    }
-
-    const newCV: SavedCV = {
-      id: "cv-" + Date.now(),
-      name: name.trim(),
-      form: {
-        ...emptyForm,
-        experience: [...emptyForm.experience],
-        education: [...emptyForm.education],
-      },
-      template: "modern",
-      accentColor: "blue",
-      updatedAt: Date.now(),
-    };
-
-    try {
-      await saveCVToFirestore(newCV);
-
-      setSavedCVs((previous) => [
-        ...previous,
-        newCV,
-      ]);
-
-      setCurrentCVId(newCV.id);
-      setCvName(newCV.name);
-      setForm({
-        ...emptyForm,
-        experience: [...emptyForm.experience],
-        education: [...emptyForm.education],
-      });
-      setTemplate("modern");
-      setAccentColor("blue");
-      setAtsAnalysis(null);
-      setTailoredResult("");
-      setAiResult("");
-      setSaveStatus("Saved");
-
-      console.log(
-        "New CV created in Firestore."
-      );
-    } catch (error) {
-      console.error(
-        "Could not create new CV:",
-        error
-      );
-
-      window.alert(
-        "Could not create the new CV. Please try again."
-      );
-    }
-  }}
-  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-500"
->
-  + New CV
-</button>
-
-<button
-  type="button"
-  onClick={async () => {
-    const newName = window.prompt(
-      "Rename this CV:",
-      cvName
-    );
-
-    if (!newName?.trim()) return;
-
-    const updatedName = newName.trim();
-    const user = auth.currentUser;
-
-    if (!user) {
-      window.alert(
-        "You must be signed in to rename a CV."
-      );
-      return;
-    }
-
-    try {
-      const existingCV = savedCVs.find(
-        (cv) => cv.id === currentCVId
-      );
-
-      if (!existingCV) {
-        window.alert(
-          "Could not find the selected CV."
-        );
-        return;
-      }
-
-      const updatedCV: SavedCV = {
-        ...existingCV,
-        name: updatedName,
-        updatedAt: Date.now(),
-      };
-
-      await saveCVToFirestore(updatedCV);
-
-      setCvName(updatedName);
-
-      setSavedCVs((previous) =>
-        previous.map((cv) =>
-          cv.id === currentCVId
-            ? updatedCV
-            : cv
-        )
-      );
-
-      setSaveStatus("Saved");
-
-      console.log(
-        "CV renamed in Firestore."
-      );
-    } catch (error) {
-      console.error(
-        "Could not rename CV:",
-        error
-      );
-
-      window.alert(
-        "Could not rename the CV. Please try again."
-      );
-    }
-  }}
-  className={`rounded-xl border px-4 py-2 text-sm font-bold ${
-    darkMode
-      ? "border-slate-700 text-white hover:bg-slate-800"
-      : "border-slate-200 text-slate-800 hover:bg-slate-50"
-  }`}
->
-  ✏️ Rename
-</button>
-
-      {savedCVs.length > 1 && (
-        <button
         type="button"
         onClick={async () => {
-          const confirmed = window.confirm(
-            `Delete "${cvName}"?`
+          const name = window.prompt(
+            "Enter a name for your new CV:",
+            "New CV"
           );
-      
-          if (!confirmed) return;
-      
-          if (savedCVs.length <= 1) {
-            window.alert(
-              "You must keep at least one CV."
-            );
-            return;
-          }
-      
+
+          if (!name?.trim()) return;
+
           const user = auth.currentUser;
-      
+
           if (!user) {
             window.alert(
-              "You must be signed in to delete a CV."
+              "You must be signed in to create a new CV."
             );
             return;
           }
-      
+
+          const newCV: SavedCV = {
+            id: "cv-" + Date.now(),
+            name: name.trim(),
+            form: {
+              ...emptyForm,
+              experience: [...emptyForm.experience],
+              education: [...emptyForm.education],
+            },
+            template: "modern",
+            accentColor: "blue",
+            updatedAt: Date.now(),
+          };
+
           try {
-            await deleteDoc(
-              doc(
-                db,
-                "users",
-                user.uid,
-                "cvs",
-                currentCVId
-              )
-            );
-      
-            const remaining = savedCVs.filter(
-              (cv) => cv.id !== currentCVId
-            );
-      
-            const nextCV = remaining[0];
-      
-            setSavedCVs(remaining);
-      
-            setCurrentCVId(nextCV.id);
-            setCvName(nextCV.name);
-            setForm(nextCV.form);
-            setTemplate(nextCV.template);
-            setAccentColor(nextCV.accentColor);
+            await saveCVToFirestore(newCV);
+
+            setSavedCVs((previous) => [
+              ...previous,
+              newCV,
+            ]);
+
+            setCurrentCVId(newCV.id);
+            setCvName(newCV.name);
+            setForm({
+              ...emptyForm,
+              experience: [...emptyForm.experience],
+              education: [...emptyForm.education],
+            });
+            setTemplate("modern");
+            setAccentColor("blue");
             setAtsAnalysis(null);
             setTailoredResult("");
             setAiResult("");
-      
             setSaveStatus("Saved");
-      
+
             console.log(
-              "CV deleted from Firestore."
+              "New CV created in Firestore."
             );
           } catch (error) {
             console.error(
-              "Could not delete CV:",
+              "Could not create new CV:",
               error
             );
-      
+
             window.alert(
-              "Could not delete the CV. Please try again."
+              "Could not create the new CV. Please try again."
             );
           }
         }}
-        className="rounded-xl border border-red-200 px-4 py-2 text-sm font-bold text-red-600 transition hover:bg-red-50"
+        className="min-w-0 flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-500 hover:shadow-md active:translate-y-0 sm:flex-none"
       >
-        🗑️ Delete
+        + New CV
       </button>
+
+      {/* RENAME CV */}
+      <button
+        type="button"
+        onClick={async () => {
+          const newName = window.prompt(
+            "Rename this CV:",
+            cvName
+          );
+
+          if (!newName?.trim()) return;
+
+          const updatedName = newName.trim();
+          const user = auth.currentUser;
+
+          if (!user) {
+            window.alert(
+              "You must be signed in to rename a CV."
+            );
+            return;
+          }
+
+          try {
+            const existingCV = savedCVs.find(
+              (cv) => cv.id === currentCVId
+            );
+
+            if (!existingCV) {
+              window.alert(
+                "Could not find the selected CV."
+              );
+              return;
+            }
+
+            const updatedCV: SavedCV = {
+              ...existingCV,
+              name: updatedName,
+              updatedAt: Date.now(),
+            };
+
+            await saveCVToFirestore(updatedCV);
+
+            setCvName(updatedName);
+
+            setSavedCVs((previous) =>
+              previous.map((cv) =>
+                cv.id === currentCVId
+                  ? updatedCV
+                  : cv
+              )
+            );
+
+            setSaveStatus("Saved");
+
+            console.log(
+              "CV renamed in Firestore."
+            );
+          } catch (error) {
+            console.error(
+              "Could not rename CV:",
+              error
+            );
+
+            window.alert(
+              "Could not rename the CV. Please try again."
+            );
+          }
+        }}
+        className={`min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm font-bold shadow-sm transition hover:-translate-y-0.5 sm:flex-none ${
+          darkMode
+            ? "border-slate-700 bg-slate-900 text-white hover:bg-slate-800 hover:shadow-md"
+            : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50 hover:shadow-md"
+        }`}
+      >
+        ✏️ Rename
+      </button>
+
+      {/* DELETE CV */}
+      {savedCVs.length > 1 && (
+        <button
+          type="button"
+          onClick={async () => {
+            const confirmed = window.confirm(
+              `Delete "${cvName}"?`
+            );
+
+            if (!confirmed) return;
+
+            if (savedCVs.length <= 1) {
+              window.alert(
+                "You must keep at least one CV."
+              );
+              return;
+            }
+
+            const user = auth.currentUser;
+
+            if (!user) {
+              window.alert(
+                "You must be signed in to delete a CV."
+              );
+              return;
+            }
+
+            try {
+              await deleteDoc(
+                doc(
+                  db,
+                  "users",
+                  user.uid,
+                  "cvs",
+                  currentCVId
+                )
+              );
+
+              const remaining = savedCVs.filter(
+                (cv) => cv.id !== currentCVId
+              );
+
+              const nextCV = remaining[0];
+
+              setSavedCVs(remaining);
+              setCurrentCVId(nextCV.id);
+              setCvName(nextCV.name);
+              setForm(nextCV.form);
+              setTemplate(nextCV.template);
+              setAccentColor(nextCV.accentColor);
+              setAtsAnalysis(null);
+              setTailoredResult("");
+              setAiResult("");
+              setSaveStatus("Saved");
+
+              console.log(
+                "CV deleted from Firestore."
+              );
+            } catch (error) {
+              console.error(
+                "Could not delete CV:",
+                error
+              );
+
+              window.alert(
+                "Could not delete the CV. Please try again."
+              );
+            }
+          }}
+          className="min-w-0 flex-1 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-bold text-red-600 shadow-sm transition hover:-translate-y-0.5 hover:bg-red-50 hover:shadow-md sm:flex-none dark:border-red-500/30 dark:bg-slate-900 dark:text-red-400 dark:hover:bg-red-500/10"
+        >
+          🗑️ Delete
+        </button>
       )}
     </div>
   </div>
 </div>
 
-        <div className="grid gap-8 lg:grid-cols-[420px_minmax(0,1fr)]">
+{/* MAIN BUILDER LAYOUT */}
+<div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[420px_minmax(0,1fr)] lg:gap-8">
 
           {/* =========================
               FORM
@@ -2480,453 +2915,472 @@ ${improvedSkills}
 
               {/* BASIC INFO */}
 
+<div className="grid gap-4 md:grid-cols-2">
+  <input
+    value={form.name}
+    onChange={(e) =>
+      updateField("name", e.target.value)
+    }
+    placeholder="Full Name"
+    className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+      darkMode
+        ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+    }`}
+  />
+
+  <input
+    value={form.jobTitle}
+    onChange={(e) =>
+      updateField("jobTitle", e.target.value)
+    }
+    placeholder="Target Job Title"
+    className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+      darkMode
+        ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+    }`}
+  />
+
+  <input
+    type="email"
+    value={form.email}
+    onChange={(e) =>
+      updateField("email", e.target.value)
+    }
+    placeholder="Email"
+    className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+      darkMode
+        ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+    }`}
+  />
+
+  <input
+    type="tel"
+    value={form.phone}
+    onChange={(e) =>
+      updateField("phone", e.target.value)
+    }
+    placeholder="Phone"
+    className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+      darkMode
+        ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+    }`}
+  />
+
+  <input
+    value={form.location}
+    onChange={(e) =>
+      updateField("location", e.target.value)
+    }
+    placeholder="Location"
+    className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+      darkMode
+        ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+    }`}
+  />
+</div>
+
+{/* SUMMARY */}
+
+<div className="pt-2">
+  <label
+    className={`mb-2 block text-sm font-bold ${
+      darkMode ? "text-slate-200" : "text-slate-700"
+    }`}
+  >
+    Professional Summary
+  </label>
+
+  <textarea
+    value={form.summary}
+    onChange={(e) =>
+      updateField("summary", e.target.value)
+    }
+    placeholder="Write a short professional summary..."
+    rows={5}
+    className={`w-full resize-none rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+      darkMode
+        ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+    }`}
+  />
+</div>
+
+              {/* =========================
+    WORK EXPERIENCE
+========================= */}
+
+<div className="space-y-5">
+  {/* SECTION HEADER */}
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h3
+        className={`text-base font-black ${
+          darkMode ? "text-white" : "text-slate-900"
+        }`}
+      >
+        Work Experience
+      </h3>
+
+      <p
+        className={`mt-1 text-xs ${
+          darkMode ? "text-slate-400" : "text-slate-500"
+        }`}
+      >
+        Add your previous jobs and achievements.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={addExperience}
+      className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-700 hover:shadow-md active:translate-y-0 sm:w-auto"
+    >
+      + Add Experience
+    </button>
+  </div>
+
+  {/* EXPERIENCE ITEMS */}
+  <div className="space-y-4">
+    {form.experience.map(
+      (experience, index) => (
+        <div
+          key={index}
+          className={`rounded-2xl border p-4 transition-all ${
+            darkMode
+              ? "border-slate-700 bg-slate-800"
+              : "border-slate-200 bg-slate-50"
+          }`}
+        >
+          {/* EXPERIENCE HEADER */}
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-black ${
+                  darkMode
+                    ? "bg-slate-700 text-slate-200"
+                    : "bg-white text-slate-600 shadow-sm"
+                }`}
+              >
+                {index + 1}
+              </div>
+
+              <p
+                className={`truncate text-sm font-black ${
+                  darkMode
+                    ? "text-white"
+                    : "text-slate-800"
+                }`}
+              >
+                Experience {index + 1}
+              </p>
+            </div>
+
+            {form.experience.length > 1 && (
+              <button
+                type="button"
+                onClick={() =>
+                  removeExperience(index)
+                }
+                className="shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-500 transition hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-500/10"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+
+          {/* EXPERIENCE FIELDS */}
+          <div className="space-y-3">
+            <input
+              value={experience.jobTitle}
+              onChange={(e) =>
+                updateExperience(
+                  index,
+                  "jobTitle",
+                  e.target.value
+                )
+              }
+              placeholder="Job Title"
+              className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+                darkMode
+                  ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                  : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+              }`}
+            />
+
+            <div className="grid gap-3 md:grid-cols-2">
               <input
-                value={form.name}
+                value={experience.company}
                 onChange={(e) =>
-                  updateField(
-                    "name",
+                  updateExperience(
+                    index,
+                    "company",
                     e.target.value
                   )
                 }
-                placeholder="Full Name"
-                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
+                placeholder="Company"
+                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
                   darkMode
-                    ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-white"
-                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
+                    ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
                 }`}
               />
 
               <input
-                value={form.jobTitle}
+                value={experience.location}
                 onChange={(e) =>
-                  updateField(
-                    "jobTitle",
-                    e.target.value
-                  )
-                }
-                placeholder="Target Job Title"
-                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                  darkMode
-                    ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-white"
-                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                }`}
-              />
-
-              <input
-                value={form.email}
-                onChange={(e) =>
-                  updateField(
-                    "email",
-                    e.target.value
-                  )
-                }
-                placeholder="Email"
-                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                  darkMode
-                    ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-white"
-                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                }`}
-              />
-
-              <input
-                value={form.phone}
-                onChange={(e) =>
-                  updateField(
-                    "phone",
-                    e.target.value
-                  )
-                }
-                placeholder="Phone"
-                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                  darkMode
-                    ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-white"
-                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                }`}
-              />
-
-              <input
-                value={form.location}
-                onChange={(e) =>
-                  updateField(
+                  updateExperience(
+                    index,
                     "location",
                     e.target.value
                   )
                 }
                 placeholder="Location"
-                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
+                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
                   darkMode
-                    ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-white"
-                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
+                    ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
                 }`}
               />
+            </div>
 
-              {/* SUMMARY */}
-
-              <textarea
-                value={form.summary}
+            {/* DATES */}
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                value={experience.startDate}
                 onChange={(e) =>
-                  updateField(
-                    "summary",
+                  updateExperience(
+                    index,
+                    "startDate",
                     e.target.value
                   )
                 }
-                placeholder="Professional Summary"
-                rows={5}
-                className={`w-full resize-none rounded-xl border px-4 py-3 text-sm outline-none transition ${
+                placeholder="Start Date"
+                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
                   darkMode
-                    ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400 focus:border-white"
-                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
+                    ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
                 }`}
               />
 
-              {/* =========================
-                  WORK EXPERIENCE
-              ========================= */}
+              <input
+                value={experience.endDate}
+                onChange={(e) =>
+                  updateExperience(
+                    index,
+                    "endDate",
+                    e.target.value
+                  )
+                }
+                placeholder="End Date"
+                className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+                  darkMode
+                    ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+                }`}
+              />
+            </div>
 
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3
-                      className={`font-bold ${
-                        darkMode
-                          ? "text-white"
-                          : "text-slate-900"
-                      }`}
-                    >
-                      Work Experience
-                    </h3>
+            {/* DESCRIPTION */}
+            <div>
+              <textarea
+                value={experience.description}
+                onChange={(e) =>
+                  updateExperience(
+                    index,
+                    "description",
+                    e.target.value
+                  )
+                }
+                placeholder="Responsibilities & achievements"
+                rows={5}
+                className={`w-full resize-none rounded-xl border px-4 py-3 text-sm outline-none transition-all ${
+                  darkMode
+                    ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+                }`}
+              />
 
-                    <p
-                      className={`mt-1 text-xs ${
-                        darkMode
-                          ? "text-slate-400"
-                          : "text-slate-500"
-                      }`}
-                    >
-                      Add your previous jobs and achievements.
-                    </p>
-                  </div>
+              {/* AI IMPROVEMENT */}
+              {userPlan === "pro" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    improveExperienceWithAI(index)
+                  }
+                  disabled={
+                    tailoringExperienceIndex === index
+                  }
+                  className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
+                >
+                  {tailoringExperienceIndex === index
+                    ? "⏳ Improving..."
+                    : "✨ Improve with AI"}
+                </button>
+              )}
+            </div>
+
+            {/* EDUCATION AI RESULT */}
+            {educationAIResult?.index === index && (
+              <div
+                className={`rounded-2xl border p-4 ${
+                  darkMode
+                    ? "border-blue-800 bg-slate-900"
+                    : "border-blue-200 bg-blue-50"
+                }`}
+              >
+                <p
+                  className={`mb-2 text-sm font-bold ${
+                    darkMode
+                      ? "text-white"
+                      : "text-slate-800"
+                  }`}
+                >
+                  ✨ AI Education Improvement
+                </p>
+
+                <div
+                  className={`whitespace-pre-line text-sm leading-6 ${
+                    darkMode
+                      ? "text-slate-200"
+                      : "text-slate-700"
+                  }`}
+                >
+                  {educationAIResult.result}
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm((previous) => ({
+                        ...previous,
+                        education:
+                          previous.education.map(
+                            (item, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...item,
+                                    details:
+                                      educationAIResult.result,
+                                  }
+                                : item
+                          ),
+                      }));
+
+                      setEducationAIResult(null);
+
+                      setTailoredResult(
+                        `✨ Education ${index + 1} updated with AI.`
+                      );
+                    }}
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
+                  >
+                    ✓ Apply
+                  </button>
 
                   <button
                     type="button"
-                    onClick={addExperience}
-                    className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-700"
+                    onClick={() => {
+                      setEducationAIResult(null);
+                    }}
+                    className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                      darkMode
+                        ? "border-slate-700 text-white hover:bg-slate-800"
+                        : "border-slate-300 text-slate-700 hover:bg-white"
+                    }`}
                   >
-                    + Add
+                    Cancel
                   </button>
                 </div>
-
-                {form.experience.map(
-                  (experience, index) => (
-                    <div
-                      key={index}
-                      className={`rounded-2xl border p-4 ${
-                        darkMode
-                          ? "border-slate-700 bg-slate-800"
-                          : "border-slate-200 bg-slate-50"
-                      }`}
-                    >
-                      <div className="mb-4 flex items-center justify-between">
-                        <p
-                          className={`text-sm font-bold ${
-                            darkMode
-                              ? "text-white"
-                              : "text-slate-800"
-                          }`}
-                        >
-                          Experience {index + 1}
-                        </p>
-
-                        {form.experience.length >
-                          1 && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              removeExperience(
-                                index
-                              )
-                            }
-                            className="text-xs font-semibold text-red-500 hover:text-red-700"
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="space-y-3">
-
-                        <input
-                          value={
-                            experience.jobTitle
-                          }
-                          onChange={(e) =>
-                            updateExperience(
-                              index,
-                              "jobTitle",
-                              e.target.value
-                            )
-                          }
-                          placeholder="Job Title"
-                          className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                            darkMode
-                              ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-white"
-                              : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                          }`}
-                        />
-
-                        <input
-                          value={
-                            experience.company
-                          }
-                          onChange={(e) =>
-                            updateExperience(
-                              index,
-                              "company",
-                              e.target.value
-                            )
-                          }
-                          placeholder="Company"
-                          className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                            darkMode
-                              ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-white"
-                              : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                          }`}
-                        />
-
-                        <input
-                          value={
-                            experience.location
-                          }
-                          onChange={(e) =>
-                            updateExperience(
-                              index,
-                              "location",
-                              e.target.value
-                            )
-                          }
-                          placeholder="Location"
-                          className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                            darkMode
-                              ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-white"
-                              : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                          }`}
-                        />
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <input
-                            value={
-                              experience.startDate
-                            }
-                            onChange={(e) =>
-                              updateExperience(
-                                index,
-                                "startDate",
-                                e.target.value
-                              )
-                            }
-                            placeholder="Start Date"
-                            className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                              darkMode
-                                ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-white"
-                                : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                            }`}
-                          />
-
-                          <input
-                            value={
-                              experience.endDate
-                            }
-                            onChange={(e) =>
-                              updateExperience(
-                                index,
-                                "endDate",
-                                e.target.value
-                              )
-                            }
-                            placeholder="End Date"
-                            className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                              darkMode
-                                ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-white"
-                                : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                            }`}
-                          />
-                        </div>
-
-                        <textarea
-                          value={
-                            experience.description
-                          }
-                          onChange={(e) =>
-                            updateExperience(
-                              index,
-                              "description",
-                              e.target.value
-                            )
-                          }
-                          placeholder="Responsibilities & achievements"
-                          rows={5}
-                          className={`w-full resize-none rounded-xl border px-4 py-3 text-sm outline-none transition ${
-                            darkMode
-                              ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 focus:border-white"
-                              : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-slate-900"
-                          }`}
-                        />
-                        {isPro && (
-  <button
-    type="button"
-    onClick={() => improveExperienceWithAI(index)}
-    disabled={tailoringExperienceIndex === index}
-    className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-  >
-    {tailoringExperienceIndex === index
-      ? "⏳ Improving..."
-      : "✨ Improve with AI"}
-  </button>
-)}
-
-{educationAIResult?.index === index && (
-  <div
-    className={`mt-4 rounded-2xl border p-4 ${
-      darkMode
-        ? "border-blue-800 bg-slate-900"
-        : "border-blue-200 bg-blue-50"
-    }`}
-  >
-    <p
-      className={`mb-2 text-sm font-bold ${
-        darkMode ? "text-white" : "text-slate-800"
-      }`}
-    >
-      ✨ AI Education Improvement
-    </p>
-
-    <div
-      className={`whitespace-pre-line text-sm leading-6 ${
-        darkMode ? "text-slate-200" : "text-slate-700"
-      }`}
-    >
-      {educationAIResult.result}
-    </div>
-
-    <div className="mt-4 flex gap-3">
-      <button
-        type="button"
-        onClick={() => {
-          setForm((previous) => ({
-            ...previous,
-            education: previous.education.map(
-              (item, itemIndex) =>
-                itemIndex === index
-                  ? {
-                      ...item,
-                      details: educationAIResult.result,
-                    }
-                  : item
-            ),
-          }));
-        
-          setEducationAIResult(null);
-        
-          setTailoredResult(
-            `✨ Education ${index + 1} updated with AI.`
-          );
-        }}
-        className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
-      >
-        ✓ Apply
-      </button>
-
-      <button
-        type="button"
-        onClick={() => {
-          setEducationAIResult(null);
-        }}
-        className={`rounded-xl border px-4 py-2 text-sm font-bold ${
-          darkMode
-            ? "border-slate-700 text-white hover:bg-slate-800"
-            : "border-slate-300 text-slate-700 hover:bg-white"
-        }`}
-      >
-        Cancel
-      </button>
-    </div>
-  </div>
-)}
-
-{experienceAIResult?.index === index && (
-  <div
-    className={`mt-4 rounded-2xl border p-4 ${
-      darkMode
-        ? "border-blue-800 bg-slate-900"
-        : "border-blue-200 bg-blue-50"
-    }`}
-  >
-    <p
-      className={`mb-2 text-sm font-bold ${
-        darkMode ? "text-white" : "text-slate-800"
-      }`}
-    >
-      ✨ AI Improved Version
-    </p>
-
-    <div
-      className={`whitespace-pre-line text-sm leading-6 ${
-        darkMode ? "text-slate-200" : "text-slate-700"
-      }`}
-    >
-      {experienceAIResult.result}
-    </div>
-
-    <div className="mt-4 flex gap-3">
-      <button
-        type="button"
-        onClick={() => {
-          setForm((previous) => ({
-            ...previous,
-            experience: previous.experience.map(
-              (item, itemIndex) =>
-                itemIndex === index
-                  ? {
-                      ...item,
-                      description:
-                        experienceAIResult.result,
-                    }
-                  : item
-            ),
-          }));
-
-          setExperienceAIResult(null);
-          setTailoredResult(
-            `✨ Experience ${index + 1} updated with AI.`
-          );
-        }}
-        className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
-      >
-        ✓ Apply
-      </button>
-
-      <button
-        type="button"
-        onClick={() => {
-          setExperienceAIResult(null);
-        }}
-        className={`rounded-xl border px-4 py-2 text-sm font-bold ${
-          darkMode
-            ? "border-slate-700 text-white hover:bg-slate-800"
-            : "border-slate-300 text-slate-700 hover:bg-white"
-        }`}
-      >
-        Cancel
-      </button>
-    </div>
-  </div>
-)}
-
-                      </div>
-                    </div>
-                  )
-                )}
               </div>
+            )}
+
+            {/* EXPERIENCE AI RESULT */}
+            {experienceAIResult?.index === index && (
+              <div
+                className={`rounded-2xl border p-4 ${
+                  darkMode
+                    ? "border-blue-800 bg-slate-900"
+                    : "border-blue-200 bg-blue-50"
+                }`}
+              >
+                <p
+                  className={`mb-2 text-sm font-bold ${
+                    darkMode
+                      ? "text-white"
+                      : "text-slate-800"
+                  }`}
+                >
+                  ✨ AI Improved Version
+                </p>
+
+                <div
+                  className={`whitespace-pre-line text-sm leading-6 ${
+                    darkMode
+                      ? "text-slate-200"
+                      : "text-slate-700"
+                  }`}
+                >
+                  {experienceAIResult.result}
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm((previous) => ({
+                        ...previous,
+                        experience:
+                          previous.experience.map(
+                            (item, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...item,
+                                    description:
+                                      experienceAIResult.result,
+                                  }
+                                : item
+                          ),
+                      }));
+
+                      setExperienceAIResult(null);
+
+                      setTailoredResult(
+                        `✨ Experience ${index + 1} updated with AI.`
+                      );
+                    }}
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
+                  >
+                    ✓ Apply
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExperienceAIResult(null);
+                    }}
+                    className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                      darkMode
+                        ? "border-slate-700 text-white hover:bg-slate-800"
+                        : "border-slate-300 text-slate-700 hover:bg-white"
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )
+    )}
+  </div>
+</div>
 
               {/* =========================
                   EDUCATION
@@ -3069,18 +3523,31 @@ ${improvedSkills}
   }`}
 />
 
-      {isPro && (
-        <button
-          type="button"
-          onClick={() => improveEducationWithAI(index)}
-          disabled={tailoringEducationIndex === index}
-          className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {tailoringEducationIndex === index
-            ? "⏳ Improving..."
-            : "✨ Improve with AI"}
-        </button>
-      )}
+<button
+  type="button"
+  onClick={() => improveEducationWithAI(index)}
+  disabled={
+    tailoringEducationIndex === index ||
+    (!isProUser && aiUsesRemaining <= 0)
+  }
+  className="mt-3 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+>
+  {tailoringEducationIndex === index
+    ? "⏳ Improving..."
+    : "✨ Improve with AI"}
+</button>
+
+{educationAIResult?.index === index && (
+  <div className="mt-3 rounded-xl border border-purple-200 bg-purple-50 p-4 text-sm text-slate-700">
+    <p className="mb-2 font-bold text-purple-700">
+      ✨ AI Improvement
+    </p>
+
+    <p className="whitespace-pre-line">
+      {educationAIResult.result}
+    </p>
+  </div>
+)}
     </div>
   </div>
 ))}
@@ -3166,13 +3633,32 @@ ${improvedSkills}
                   }`}
                 />
 
-                <button
-                  onClick={tailorCV}
-                  disabled={tailoring}
-                  className="mt-3 w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-700 disabled:opacity-50"
-                >
-                  {tailoring ? "Tailoring..." : "Tailor CV with AI"}
-                </button>
+{isProUser ? (
+  <p className="mt-3 text-center text-xs font-semibold text-emerald-600">
+    ⭐ Pro — Unlimited AI tailoring
+  </p>
+) : (
+  <p
+    className={`mt-3 text-center text-xs font-semibold ${
+      aiUsesRemaining === 0
+        ? "text-red-500"
+        : darkMode
+          ? "text-slate-400"
+          : "text-slate-500"
+    }`}
+  >
+    {aiUsesRemaining} free AI use
+    {aiUsesRemaining === 1 ? "" : "s"} remaining
+  </p>
+)}
+
+<button
+  onClick={tailorCV}
+  disabled={tailoring || (!isProUser && aiUsesRemaining === 0)}
+  className="mt-3 w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-700 disabled:opacity-50"
+>
+  {tailoring ? "Tailoring..." : "Tailor CV with AI"}
+</button>
               </div>
             </div>
           </section>
@@ -3252,6 +3738,7 @@ ${improvedSkills}
 
 
 {/* EXECUTIVE */}
+{/* EXECUTIVE */}
 <button
   onClick={() => setTemplate("executive")}
   className={`group rounded-2xl border-2 p-3 text-left transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${
@@ -3308,10 +3795,10 @@ ${improvedSkills}
     </div>
 
     {template === "executive" && (
-      <span className="rounded-full bg-slate-900 px-2 py-1 text-[10px] font-bold text-white">
-        Selected
-      </span>
-    )}
+  <span className="rounded-full bg-slate-900 px-2 py-1 text-[10px] font-bold text-white">
+    Selected
+  </span>
+)}
   </div>
 </button>
 
@@ -3668,31 +4155,51 @@ ${improvedSkills}
                 CV PAPER
             ========================= */}
 
-<div className="cv-print-area mx-auto w-full max-w-[794px] rounded-sm bg-white shadow-2xl">
-  <div className={`cv-preview-wrapper overflow-auto rounded-2xl ${
-    darkMode ? "bg-slate-800 p-4 md:p-8" : "bg-slate-300 p-4 md:p-8"
-  }`}>
+{/* MOBILE RESPONSIVE CV PREVIEW */}
+<div
+  ref={cvPreviewRef}
+  className={`w-full min-w-0 overflow-hidden rounded-xl p-2 sm:p-4 md:p-8 ${
+    darkMode ? "bg-slate-800" : "bg-slate-300"
+  } print:overflow-visible print:rounded-none print:bg-white print:p-0`}
+>
+  <div
+    className="relative mx-auto"
+    style={{
+      width: `${794 * cvScale}px`,
+      height: `${1123 * cvScale}px`,
+    }}
+  >
+    <div
+      id="cv-preview"
+      className="cv-print-area absolute left-0 top-0 bg-white shadow-2xl print:shadow-none"
+      style={{
+        width: "794px",
+        minHeight: "1123px",
+        transform: `scale(${cvScale})`,
+        transformOrigin: "top left",
+      }}
+    >
+      {template === "modern" && (
+        <ModernTemplate
+          form={form}
+          accentColor={accentColor}
+        />
+      )}
 
-    {template === "modern" && (
-      <ModernTemplate
-        form={form}
-        accentColor={accentColor}
-      />
-    )}
+      {template === "executive" && (
+        <ExecutiveTemplate
+          form={form}
+          accentColor={accentColor}
+        />
+      )}
 
-    {template === "executive" && (
-      <ExecutiveTemplate
-        form={form}
-        accentColor={accentColor}
-      />
-    )}
-
-    {template === "minimal" && (
-      <MinimalTemplate
-        form={form}
-        accentColor={accentColor}
-      />
-    )}
+      {template === "minimal" && (
+        <MinimalTemplate
+          form={form}
+          accentColor={accentColor}
+        />
+      )}
+    </div>
   </div>
 </div>
 
@@ -3700,7 +4207,20 @@ ${improvedSkills}
                 TAILORED RESULT
             ========================= */}
 
-{tailoredResult && (
+{tailoredResult && !atsAnalysis && (
+  <div
+    role="alert"
+    className={`mt-6 rounded-xl border p-4 text-sm font-semibold ${
+      darkMode
+        ? "border-amber-700 bg-amber-950/30 text-amber-200"
+        : "border-amber-300 bg-amber-50 text-amber-800"
+    }`}
+  >
+    {tailoredResult}
+  </div>
+)}
+
+{tailoredResult && atsAnalysis && (
   <div
     className={`mt-6 rounded-2xl p-6 shadow-sm ${
       darkMode ? "bg-slate-900" : "bg-white"
@@ -3959,17 +4479,97 @@ ${improvedSkills}
           </section>
         </div>
       </div>
+
+      {proModalOpen && (
+  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+    <div
+      className={`w-full max-w-md rounded-3xl p-6 shadow-2xl ${
+        darkMode
+          ? "bg-slate-900 text-white"
+          : "bg-white text-slate-900"
+      }`}
+    >
+      <div className="mb-6 text-center">
+        <div className="mb-3 text-4xl">⭐</div>
+
+        <h2 className="text-2xl font-black">
+          CVForge Pro
+        </h2>
+
+        <p
+          className={`mt-2 text-sm ${
+            darkMode
+              ? "text-slate-400"
+              : "text-slate-500"
+          }`}
+        >
+          Unlock the full power of AI-powered CV building.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {[
+          "Unlimited AI CV improvements",
+          "AI experience improvement",
+          "AI education improvement",
+          "Advanced CV tailoring",
+          "Premium features and future updates",
+        ].map((feature) => (
+          <div
+            key={feature}
+            className={`flex items-center gap-3 rounded-xl p-3 ${
+              darkMode
+                ? "bg-slate-800"
+                : "bg-slate-50"
+            }`}
+          >
+            <span className="text-green-500">✓</span>
+            <span className="text-sm font-medium">
+              {feature}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex gap-3">
+        <button
+          type="button"
+          onClick={() => setProModalOpen(false)}
+          className={`flex-1 rounded-xl border px-4 py-3 text-sm font-bold ${
+            darkMode
+              ? "border-slate-700 text-slate-300 hover:bg-slate-800"
+              : "border-slate-300 text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          Maybe Later
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            alert("Pro subscriptions will be available soon.");
+            setProModalOpen(false);
+          }}
+          className="flex-1 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700"
+        >
+          Upgrade to Pro
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
     </main>
   );
 }
 
-export default function BuilderPage() {
-  return (
-    <AuthGuard>
-      <Suspense fallback={<div>Loading CV Builder...</div>}>
-        <BuilderPageContent />
-      </Suspense>
-    </AuthGuard>
-  );
-}
+  export default function BuilderPage() {
+    return (
+      <AuthGuard>
+        <Suspense fallback={<div>Loading CV Builder...</div>}>
+          <BuilderPageContent />
+        </Suspense>
+      </AuthGuard>
+    );
+  }
 

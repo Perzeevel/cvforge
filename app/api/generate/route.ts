@@ -1,8 +1,37 @@
 import { NextResponse } from "next/server";
 
+import { adminAuth, adminDb } from "../../lib/firebase-admin";
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+
+    const authHeader = request.headers.get("authorization");
+
+if (!authHeader?.startsWith("Bearer ")) {
+  return NextResponse.json(
+    { error: "Authentication required." },
+    { status: 401 }
+  );
+}
+
+const idToken = authHeader.split("Bearer ")[1];
+
+let decodedToken;
+
+try {
+  decodedToken = await adminAuth.verifyIdToken(idToken);
+} catch (error) {
+  console.error("AUTH ERROR:", error);
+
+  return NextResponse.json(
+    { error: "Invalid authentication token." },
+    { status: 401 }
+  );
+}
+
+const userId = decodedToken.uid;
+
 
     const {
       name,
@@ -30,6 +59,42 @@ console.log("EDUCATION FROM API:", education);
         { status: 500 }
       );
     }
+
+    const userRef = adminDb.collection("users").doc(userId);
+
+const usage = await adminDb.runTransaction(async (transaction) => {
+  const snapshot = await transaction.get(userRef);
+  const data = snapshot.data();
+
+  const plan = data?.plan === "pro" ? "pro" : "free";
+  const used = data?.aiUses ?? 0;
+
+  if (plan === "pro") {
+    return { allowed: true };
+  }
+
+  if (used >= 2) {
+    return { allowed: false };
+  }
+
+  transaction.set(
+    userRef,
+    { aiUses: used + 1 },
+    { merge: true }
+  );
+
+  return { allowed: true };
+});
+
+if (!usage.allowed) {
+  return NextResponse.json(
+    {
+      error:
+      "You have used your 2 free AI uses. Upgrade to Pro to continue.",
+    },
+    { status: 403 }
+  );
+}
 
     const prompt = `
 You are an expert ATS resume analyzer.
@@ -121,6 +186,7 @@ Rules:
 - Never invent experience, qualifications, skills, employers, education, certifications, or achievements.
 `;
 
+
     const response = await fetch(
       "https://openrouter.ai/api/v1/chat/completions",
       {
@@ -196,6 +262,8 @@ Rules:
       );
     }
 
+    
+    
     return NextResponse.json({
       success: true,
       analysis,

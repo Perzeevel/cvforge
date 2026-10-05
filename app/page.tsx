@@ -23,40 +23,48 @@ export default function Home() {
 
       {/* Hero */}
       <section className="mx-auto max-w-7xl px-6 pb-24 pt-20 md:pb-32 md:pt-28">
-        <div className="mx-auto max-w-4xl text-center">
-          <div className="mb-6 inline-flex rounded-full border border-blue-400/20 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300">
-          Smart CV Builder
-          </div>
+  <div className="mx-auto max-w-4xl text-center">
 
-          <h1 className="text-5xl font-black leading-tight tracking-tight md:text-7xl">
-          Build a professional CV
-<span className="block text-blue-500">
-  in minutes.
-</span>
-          </h1>
+    <div className="mb-6 inline-flex rounded-full border border-blue-400/20 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300">
+      Smart CV Builder
+    </div>
 
-          <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-400 md:text-xl">
-              Create a professional CV in minutes.
-              Choose your design, add your experience, check your ATS match,
-              and prepare your CV for your next application.
-          </p>
+    <h1 className="text-5xl font-black leading-tight tracking-tight md:text-7xl">
+      Build a professional CV
+      <span className="block text-blue-500">
+        in minutes.
+      </span>
+    </h1>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-            <Link
-              href="/builder"
-              className="rounded-2xl bg-blue-600 px-8 py-4 text-base font-bold shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-500"
-            >
-              Create My CV →
-            </Link>
+    <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-400 md:text-xl">
+      Create, customize, and export a professional CV with powerful
+      ATS analysis and AI-powered improvements — all in one place.
+    </p>
 
-            <a
-              href="#features"
-              className="rounded-2xl border border-white/15 px-8 py-4 text-base font-bold text-slate-200 transition hover:bg-white/5"
-            >
-              See Features
-            </a>
-          </div>
-        </div>
+    <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+      <Link
+        href="/builder"
+        className="rounded-2xl bg-blue-600 px-8 py-4 text-base font-bold shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-500"
+      >
+        Create My CV →
+      </Link>
+
+      <a
+        href="#features"
+        className="rounded-2xl border border-white/15 px-8 py-4 text-base font-bold text-slate-200 transition hover:bg-white/5"
+      >
+        See Features
+      </a>
+    </div>
+
+    <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm text-slate-500">
+      <span>✓ Professional templates</span>
+      <span>✓ ATS analysis</span>
+      <span>✓ A4 PDF export</span>
+    </div>
+
+  </div>
+</section>
 
         {/* CV Preview */}
         <div className="mx-auto mt-20 max-w-5xl">
@@ -116,7 +124,7 @@ export default function Home() {
             </div>
           </div>
         </div>
-      </section>
+      
 
       {/* Features */}
       <section
@@ -223,7 +231,7 @@ export default function Home() {
       </h2>
 
       <p className="mt-4 text-slate-400">
-        Create your CV for free and unlock more powerful features with Pro.
+        Build a professional CV for free, then unlock more powerful AI tools with Pro.
       </p>
     </div>
 
@@ -243,17 +251,18 @@ export default function Home() {
         </div>
 
         <p className="mt-3 text-slate-400">
-          Everything you need to create your first professional CV.
+          Everything you need to create and export a professional CV.
         </p>
 
         <div className="mt-8 space-y-4 text-sm text-slate-300">
-  <div>✓ Everything in Free</div>
-  <div>✓ AI CV tailoring</div>
-  <div>✓ Advanced ATS optimization</div>
-  <div>✓ More CV customization</div>
-  <div>✓ Premium templates</div>
-  <div>✓ New Pro features as they launch</div>
-</div>
+          <div>✓ Create and edit CVs</div>
+          <div>✓ Modern, Executive & Minimal templates</div>
+          <div>✓ Custom accent colors</div>
+          <div>✓ CV Manager with save & load</div>
+          <div>✓ ATS analysis</div>
+          <div>✓ 2 free AI improvements</div>
+          <div>✓ A4 PDF export</div>
+        </div>
 
         <Link
           href="/builder"
@@ -266,31 +275,33 @@ export default function Home() {
       {/* Pro */}
       <div className="relative rounded-3xl border border-blue-500/40 bg-blue-600/10 p-8 shadow-xl shadow-blue-950/20">
 
-      <div className="absolute right-6 top-6 rounded-full bg-blue-600 px-3 py-1 text-xs font-bold">
-  MOST POPULAR
-</div>
+        <div className="absolute right-6 top-6 rounded-full bg-blue-600 px-3 py-1 text-xs font-bold">
+          PRO
+        </div>
 
         <div className="text-sm font-bold uppercase tracking-widest text-blue-400">
           Pro
         </div>
 
         <div className="mt-4 text-4xl font-black">
-          $9
+          $4.99
           <span className="text-base font-medium text-slate-500">
             {" "}/ month
           </span>
         </div>
 
         <p className="mt-3 text-slate-400">
-        Advanced tools for job seekers who want more from their CV.        </p>
+          Unlock unlimited AI-powered CV improvements and advanced tools.
+        </p>
 
         <div className="mt-8 space-y-4 text-sm text-slate-300">
           <div>✓ Everything in Free</div>
+          <div>✓ Unlimited AI improvements</div>
           <div>✓ AI CV tailoring</div>
+          <div>✓ AI experience improvement</div>
+          <div>✓ AI education improvement</div>
           <div>✓ Advanced ATS optimization</div>
-          <div>✓ Unlimited CVs</div>
-          <div>✓ Premium templates</div>
-          <div>✓ Priority features</div>
+          <div>✓ Premium features & future updates</div>
         </div>
 
         <button
