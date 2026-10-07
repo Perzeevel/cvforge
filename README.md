@@ -30,23 +30,23 @@ A modern web-based CV builder that helps users create professional, ATS-friendly
 
 ### Landing Page
 
-Add your landing-page screenshot here.
+![CVForge Landing Page](screenshots/cvforge-landing.png)
 
 ### CV Builder
 
-Add your CV builder screenshot here.
+![CVForge Builder](screenshots/cvforge-builder.png)
 
 ### Templates
 
-Add your template screenshots here.
+![CVForge Templates](screenshots/cvforge-templates.png)
 
 ### ATS & AI
 
-Add your ATS/AI screenshot here.
+![CVForge ATS and AI](screenshots/cvforge-ats-ai.png)
 
 ### CV Manager
 
-Add your CV Manager screenshot here.
+![CVForge CV Manager](screenshots/cvforge-cv-manager.png)
 
 ## 🏗️ Project Structure
 
