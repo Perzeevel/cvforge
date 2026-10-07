@@ -341,12 +341,27 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-white/10 px-6 py-8">
-        <div className="mx-auto flex max-w-7xl flex-col justify-between gap-3 text-sm text-slate-500 sm:flex-row">
-          <div>© 2026 CVForge. All rights reserved.</div>
-          <div>Build smarter. Apply stronger.</div>
-        </div>
-      </footer>
+      <footer className="border-t border-slate-800 px-6 py-8">
+  <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 text-sm text-slate-400 md:flex-row">
+    <p>© 2026 CVForge. All rights reserved.</p>
+
+    <div className="flex items-center gap-5">
+      <a
+        href="/privacy"
+        className="transition-colors hover:text-white"
+      >
+        Privacy Policy
+      </a>
+
+      <a
+        href="/terms"
+        className="transition-colors hover:text-white"
+      >
+        Terms of Service
+      </a>
+    </div>
+  </div>
+</footer>
     </main>
   );
 }

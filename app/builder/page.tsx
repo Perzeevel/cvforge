@@ -1176,6 +1176,7 @@ useEffect(() => {
 }, []);
 
   const [isLoaded, setIsLoaded] = useState(false);
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] =
     useState("Loading...");
 
@@ -1189,14 +1190,17 @@ const [cvName, setCvName] = useState("My CV");
   
     const loadCVs = () => {
       unsubscribe = onAuthStateChanged(auth, async (user) => {
+        setIsLoaded(false);
+        setLoadedUserId(null);
         if (!user) {
+          setLoadedUserId(null);
           setUserEmail("");
           setUserPlan("free");
           setIsLoaded(true);
           setSaveStatus("Not signed in");
           return;
         }
-        
+        setLoadedUserId(user.uid);
         setUserEmail(user.email || "");
         
         try {
@@ -1260,121 +1264,60 @@ setAiUsesRemaining(
   
             console.log("CVs loaded from Firestore.");
           } else {
-            // No cloud CVs yet.
-            // Check localStorage and migrate existing CVs.
-            const savedCVsData =
-              localStorage.getItem("cvforge-cvs");
-  
-            if (savedCVsData) {
-              const parsedCVs: SavedCV[] =
-                JSON.parse(savedCVsData);
-  
-              if (
-                Array.isArray(parsedCVs) &&
-                parsedCVs.length > 0
-              ) {
-                setSavedCVs(parsedCVs);
-  
-                const activeCV = parsedCVs[0];
-  
-                setCurrentCVId(activeCV.id);
-                setCvName(activeCV.name);
-                setForm(activeCV.form);
-                setTemplate(activeCV.template);
-                setAccentColor(activeCV.accentColor);
-  
-                // Migrate existing CVs to Firestore.
-                await Promise.all(
-                  parsedCVs.map((cv) =>
-                    setDoc(
-                      doc(
-                        db,
-                        "users",
-                        user.uid,
-                        "cvs",
-                        cv.id
-                      ),
-                      cv
-                    )
-                  )
-                );
-  
-                console.log(
-                  "Existing CVs migrated to Firestore."
-                );
-              }
-            } else {
-              // No cloud CVs and no local CVs.
-              const oldForm =
-                localStorage.getItem("cvforge-form");
-  
-              const oldAccent =
-                localStorage.getItem(
-                  "cvforge-accent-color"
-                );
-  
-              let loadedForm = emptyForm;
-  
-              if (oldForm) {
-                const parsedForm =
-                  JSON.parse(oldForm);
-  
-                loadedForm = {
-                  ...emptyForm,
-                  ...parsedForm,
-                  experience:
-                    Array.isArray(
-                      parsedForm.experience
-                    ) &&
-                    parsedForm.experience.length > 0
-                      ? parsedForm.experience
-                      : emptyForm.experience,
-                  education:
-                    Array.isArray(
-                      parsedForm.education
-                    ) &&
-                    parsedForm.education.length > 0
-                      ? parsedForm.education
-                      : emptyForm.education,
-                };
-              }
-  
-              const migratedCV: SavedCV = {
-                id: "cv-" + Date.now(),
-                name:
-                  loadedForm.name.trim() ||
-                  "My CV",
-                form: loadedForm,
-                template: "modern",
-                accentColor:
-                  oldAccent === "blue" ||
-                  oldAccent === "purple" ||
-                  oldAccent === "green" ||
-                  oldAccent === "red" ||
-                  oldAccent === "orange" ||
-                  oldAccent === "black"
-                    ? oldAccent
-                    : "blue",
-                updatedAt: Date.now(),
-              };
-  
-              setSavedCVs([migratedCV]);
-              setCurrentCVId(migratedCV.id);
-              setCvName(migratedCV.name);
-              setForm(migratedCV.form);
-              setTemplate(migratedCV.template);
-              setAccentColor(
-                migratedCV.accentColor
-              );
-  
-              await saveCVToFirestore(
-                migratedCV
-              );
-  
-              console.log(
-                "New CV created in Firestore."
-              );
-            }
+            // No cloud CVs for this user.
+            // Start with a completely fresh CV.
+            // Do NOT read or migrate localStorage data,
+            // because localStorage is shared between Firebase accounts.
+          
+            const freshForm: FormData = {
+              name: "",
+              email: "",
+              phone: "",
+              location: "",
+              jobTitle: "",
+              summary: "",
+              experience: [
+                {
+                  jobTitle: "",
+                  company: "",
+                  location: "",
+                  startDate: "",
+                  endDate: "",
+                  description: "",
+                },
+              ],
+              education: [
+                {
+                  degree: "",
+                  institution: "",
+                  location: "",
+                  graduationYear: "",
+                  details: "",
+                },
+              ],
+              skills: "",
+              jobDescription: "",
+            };
+            
+            const newCV: SavedCV = {
+              id: "cv-" + Date.now(),
+              name: "My CV",
+              form: freshForm,
+              template: "modern",
+              accentColor: "blue",
+              updatedAt: Date.now(),
+            };
+          
+            setSavedCVs([newCV]);
+            setCurrentCVId(newCV.id);
+            setCvName(newCV.name);
+            setForm(newCV.form);
+            setTemplate(newCV.template);
+            setAccentColor(newCV.accentColor);
+          
+            await saveCVToFirestore(newCV);
+          
+            console.log("Fresh CV created for new user.");
           }
         } catch (error) {
           console.error(
@@ -1382,6 +1325,7 @@ setAiUsesRemaining(
             error
           );
         } finally {
+          setLoadedUserId(user.uid);
           setIsLoaded(true);
           setSaveStatus("Saved");
         }
@@ -1486,7 +1430,13 @@ setAiUsesRemaining(
   // AUTO-SAVE CURRENT CV
   useEffect(() => {
     if (!isLoaded) return;
-  
+
+const user = auth.currentUser;
+
+if (!user) return;
+
+if (loadedUserId !== user.uid) return;
+
     let cancelled = false;
   
     const saveCV = async () => {
@@ -2522,7 +2472,7 @@ const response = await fetch("/api/generate", {
 
       {accountMenuOpen && (
         <div
-          className={`absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border p-4 shadow-xl ${
+        className={`absolute left-0 top-full z-50 mt-2 w-[calc(100vw-2rem)] max-w-72 rounded-2xl border p-4 shadow-xl sm:left-auto sm:right-0 ${
             darkMode
               ? "border-slate-700 bg-slate-900 text-white"
               : "border-slate-200 bg-white text-slate-900"
@@ -4545,15 +4495,17 @@ const response = await fetch("/api/generate", {
         </button>
 
         <button
-          type="button"
-          onClick={() => {
-            alert("Pro subscriptions will be available soon.");
-            setProModalOpen(false);
-          }}
-          className="flex-1 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700"
-        >
-          Upgrade to Pro
-        </button>
+  type="button"
+  onClick={() => {
+    setProModalOpen(false);
+    alert(
+      "CVForge Pro is coming soon. Your account is ready for the Pro upgrade."
+    );
+  }}
+  className="flex-1 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700"
+>
+  Upgrade to Pro
+</button>
       </div>
     </div>
   </div>

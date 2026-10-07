@@ -13,9 +13,46 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CVForge — AI-Powered CV Builder",
+
+  openGraph: {
+    title: "CVForge — AI-Powered CV Builder",
+    description:
+      "Build a professional CV in minutes with customizable templates, AI-powered improvements, ATS analysis, CV management, and PDF export.",
+    siteName: "CVForge",
+    type: "website",
+    locale: "en_US",
+  },
+
+  twitter: {
+    card: "summary_large_image",
+    title: "CVForge — AI-Powered CV Builder",
+    description:
+      "Build a professional CV in minutes with customizable templates, AI-powered improvements, ATS analysis, CV management, and PDF export.",
+  },
+
+  title: {
+    default: "CVForge — AI-Powered CV Builder",
+    template: "%s | CVForge",
+  },
   description:
-    "Build a professional CV in minutes with customizable templates, ATS analysis, CV management, and PDF export.",
+    "Build a professional CV in minutes with customizable templates, AI-powered improvements, ATS analysis, CV management, and PDF export.",
+  applicationName: "CVForge",
+  keywords: [
+    "CV builder",
+    "resume builder",
+    "AI CV builder",
+    "AI resume builder",
+    "ATS resume builder",
+    "professional CV",
+    "CV maker",
+  ],
+  authors: [{ name: "CVForge" }],
+  creator: "CVForge",
+  publisher: "CVForge",
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
